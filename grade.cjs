@@ -3,16 +3,21 @@
  * Lab 5-7-back-end-fundamentals — Autograder (grade.cjs)
  *
  * Scoring:
- * - TODOs total: 80
- * - Submission: 20 (on-time=20, late=10, missing/empty JS=0)
+ * - Tasks total: 80 (full marks awarded when a valid submission exists)
+ * - Submission: 20 (on-time=20, late=10, missing/empty server.js=0)
  * - Total: 100
  *
  * Due date: 11/03/2025 11:59 PM Riyadh (UTC+03:00)
  *
+ * IMPORTANT (late check):
+ * - We grade lateness using the latest *student-work* commit:
+ *   - Excludes bot/workflow commits by author/message signals
+ *   - Excludes commits that ONLY modify autograder/workflow files
+ *
  * Status codes:
  * - 0 = on time
  * - 1 = late
- * - 2 = no submission OR empty JS file
+ * - 2 = no submission OR empty server.js
  *
  * Outputs:
  * - artifacts/grade.csv  (structure unchanged)
@@ -39,6 +44,13 @@ fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
 /** Due date: 11/03/2025 11:59 PM Riyadh (UTC+03:00) */
 const DUE_ISO = "2025-11-03T23:59:00+03:00";
 const DUE_EPOCH_MS = Date.parse(DUE_ISO);
+
+/** Lab-required submission file */
+const REQUIRED_SERVER_PATH = path.join(
+  "5-7-back-end-fundamentals",
+  "backend",
+  "server.js"
+);
 
 /** ---------- Student ID ---------- */
 function getStudentId() {
@@ -223,7 +235,7 @@ function wasSubmittedLate(commitEpochMs) {
   return commitEpochMs > DUE_EPOCH_MS;
 }
 
-/** ---------- File discovery: pick student's JS file ---------- */
+/** ---------- File helpers ---------- */
 function readTextSafe(p) {
   try {
     return fs.readFileSync(p, "utf8");
@@ -231,61 +243,7 @@ function readTextSafe(p) {
     return "";
   }
 }
-function stripHtmlComments(html) {
-  return html.replace(/<!--[\s\S]*?-->/g, "");
-}
-function findScriptSrcs(html) {
-  const h = stripHtmlComments(html);
-  const re =
-    /<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>\s*<\/script\s*>/gi;
-  const srcs = [];
-  let m;
-  while ((m = re.exec(h)) !== null) srcs.push(m[1]);
-  return srcs;
-}
-function resolveFromIndex(src, indexPath) {
-  const base = path.dirname(indexPath);
-  if (/^https?:\/\//i.test(src)) return null;
-  const cleaned = src.replace(/^\//, "");
-  return path.normalize(path.join(base, cleaned));
-}
 
-function guessJsFileFromRepo() {
-  const indexPath = "index.html";
-  if (fs.existsSync(indexPath)) {
-    const html = readTextSafe(indexPath);
-    const srcs = findScriptSrcs(html);
-    for (const src of srcs) {
-      const resolved = resolveFromIndex(src, indexPath);
-      if (
-        resolved &&
-        fs.existsSync(resolved) &&
-        fs.statSync(resolved).isFile() &&
-        resolved.toLowerCase().endsWith(".js")
-      ) {
-        return resolved;
-      }
-    }
-  }
-
-  const candidates = ["script.js", "app.js", "main.js", "index.js"];
-  for (const c of candidates) {
-    if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
-  }
-
-  const entries = fs.readdirSync(".", { withFileTypes: true });
-  for (const e of entries) {
-    if (!e.isFile()) continue;
-    const name = e.name;
-    if (!name.toLowerCase().endsWith(".js")) continue;
-    if (name === "grade.cjs") continue;
-    if (name.toLowerCase().endsWith(".cjs")) continue;
-    return name;
-  }
-  return null;
-}
-
-/** ---------- JS parsing helpers ---------- */
 function stripJsComments(code) {
   return code
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -318,7 +276,6 @@ function runInSandbox(studentCode, { postlude = "" } = {}) {
     },
     globalThis: {},
     __RUNTIME_ERROR__: null,
-    __EXPORTED__: null,
   };
   context.globalThis = context;
 
@@ -345,7 +302,6 @@ function runInSandbox(studentCode, { postlude = "" } = {}) {
   return {
     logs,
     runtimeError: context.__RUNTIME_ERROR__ || null,
-    exported: context.__EXPORTED__ || null,
   };
 }
 
@@ -362,77 +318,67 @@ function formatReqs(reqs) {
   return lines;
 }
 
-/** ---------- Locate submission ---------- */
+/** ---------- Locate submission: server.js at required path ---------- */
 const studentId = getStudentId();
-const jsPath = guessJsFileFromRepo();
-const hasJs = !!(jsPath && fs.existsSync(jsPath));
-const jsCode = hasJs ? readTextSafe(jsPath) : "";
-const jsEmpty = hasJs ? isEmptyCode(jsCode) : true;
+const serverPath = REQUIRED_SERVER_PATH;
+const hasServer = fs.existsSync(serverPath) && fs.statSync(serverPath).isFile();
+const serverCode = hasServer ? readTextSafe(serverPath) : "";
+const serverEmpty = hasServer ? isEmptyCode(serverCode) : true;
 
-const jsNote = hasJs
-  ? jsEmpty
-    ? `⚠️ Found \`${jsPath}\` but it appears empty (or only comments).`
-    : `✅ Found \`${jsPath}\`.`
-  : "❌ No student JS file found in repository root (or index.html link).";
+const fileNote = hasServer
+  ? serverEmpty
+    ? `⚠️ Found \`${serverPath}\` but it appears empty (or only comments).`
+    : `✅ Found \`${serverPath}\`.`
+  : `❌ Required file not found: \`${serverPath}\`.`;
 
 /** ---------- Submission time + status ---------- */
 const commitInfo = getLatestStudentWorkCommitInfo();
 const headInfo = getHeadCommitInfo();
 
-const late = hasJs && !jsEmpty ? wasSubmittedLate(commitInfo.epochMs) : false;
+const late = hasServer && !serverEmpty ? wasSubmittedLate(commitInfo.epochMs) : false;
 
 let status = 0;
-if (!hasJs || jsEmpty) status = 2;
+if (!hasServer || serverEmpty) status = 2;
 else status = late ? 1 : 0;
 
 const submissionMarks = status === 2 ? 0 : status === 1 ? 10 : 20;
 
 const submissionStatusText =
   status === 2
-    ? "No submission detected (missing/empty JS): submission marks = 0/20."
+    ? "No submission detected (missing/empty server.js): submission marks = 0/20."
     : status === 1
       ? `Late submission via latest *student-work* commit: 10/20. (commit: ${commitInfo.sha} @ ${commitInfo.iso})`
       : `On-time submission via latest *student-work* commit: 20/20. (commit: ${commitInfo.sha} @ ${commitInfo.iso})`;
-
-/** ---------- Static analysis base ---------- */
-const cleanedCode = stripJsComments(jsCode);
 
 /** ---------- Optional dynamic run (only if compiles) ---------- */
 let runGeneral = null;
 let compileError = null;
 
-if (hasJs && !jsEmpty) {
-  const cc = canCompileInVm(jsCode);
+if (hasServer && !serverEmpty) {
+  const cc = canCompileInVm(serverCode);
   if (!cc.ok) compileError = cc.error;
-  else runGeneral = runInSandbox(jsCode);
+  else runGeneral = runInSandbox(serverCode);
 }
 
-/** ---------- TODO tasks (structure kept; grading logic adjusted) ---------- */
+/** ---------- Tasks (2 tasks, 40 each = 80) ---------- */
 const tasks = [
-  { id: "TODO 1", name: "Object with Getters & Setters (Student: fullName + GPA validation)", marks: 11 },
-  { id: "TODO 2", name: "Object as Map + for...in loop", marks: 11 },
-  { id: "TODO 3", name: "String — charAt() & length", marks: 11 },
-  { id: "TODO 4", name: "Date — day, month, year", marks: 11 },
-  { id: "TODO 5", name: "Array + Spread — min and max from 10 numbers", marks: 11 },
-  { id: "TODO 6", name: "Exceptions — try/catch/finally with empty array edge case", marks: 11 },
-  { id: "TODO 7", name: "Regex + forEach — find words containing 'ab'", marks: 14 },
+  { id: "Task 1", name: "Data flow understanding notes (backend route + frontend fetch)", marks: 40 },
+  { id: "Task 2", name: "Back-end fundamentals requirements", marks: 40 },
 ];
 
 /**
- * TODO grading rule:
- * - If status === 2 (missing/empty JS): TODOs = 0
- * - Otherwise: full marks for every TODO (total 80)
- * Feedback checklist remains, but is marked as complete ✅ when submission exists.
+ * Task grading rule:
+ * - If status === 2 (missing/empty server.js): tasks = 0
+ * - Otherwise: full marks for both tasks (80/80)
+ * Feedback checklist stays ✅ when submission exists.
  */
 let earnedTasks = 0;
 
 const taskResults = tasks.map((t) => {
   if (status === 2) {
-    const reqs = [req("No submission / empty JS → cannot grade tasks", false)];
+    const reqs = [req("No submission / empty server.js → cannot grade tasks", false)];
     return { id: t.id, name: t.name, earned: 0, max: t.marks, reqs };
   }
-
-  // Mark as complete without mentioning special-casing.
   const reqs = [req("Completed", true)];
   earnedTasks += t.marks;
   return { id: t.id, name: t.name, earned: t.marks, max: t.marks, reqs };
@@ -446,7 +392,7 @@ const now = new Date().toISOString();
 let summary = `# Lab | ${LAB_NAME} | Autograding Summary
 
 - Student: \`${studentId}\`
-- ${jsNote}
+- ${fileNote}
 - ${submissionStatusText}
 - Due (Riyadh): \`${DUE_ISO}\`
 
@@ -489,7 +435,7 @@ for (const tr of taskResults) {
 }
 
 if (compileError) {
-  summary += `\n---\n⚠️ **SyntaxError: code could not compile.** Dynamic checks were skipped; grading used static checks only.\n\n\`\`\`\n${compileError}\n\`\`\`\n`;
+  summary += `\n---\n⚠️ **SyntaxError: code could not compile.** Dynamic checks were skipped.\n\n\`\`\`\n${compileError}\n\`\`\`\n`;
 } else if (runGeneral && runGeneral.runtimeError) {
   summary += `\n---\n⚠️ **Runtime error detected (best-effort captured):**\n\n\`\`\`\n${runGeneral.runtimeError}\n\`\`\`\n`;
 }
